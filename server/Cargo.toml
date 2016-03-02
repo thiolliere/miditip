@@ -1,0 +1,9 @@
+[package]
+name = "miditip-server"
+version = "0.1.0"
+authors = ["thiolliere <guillaume.thiolliere@opmbx.org>"]
+
+[dependencies]
+argparse = "0.2.0"
+miditip-common = { path = "../common" }
+serde_json = "0.7.0"
