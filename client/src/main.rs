@@ -8,7 +8,7 @@ use common::{
     ServerMsg,
 };
 use argparse::{
-    ArgumentParser, 
+    ArgumentParser,
     Store,
     Print,
 };
@@ -27,7 +27,7 @@ use std::io::{
 };
 use std::time::Duration;
 use portmidi::{
-    PortMidiDeviceId, 
+    PortMidiDeviceId,
     PortMidiResult,
     MidiMessage,
     InputPort,
@@ -125,7 +125,7 @@ fn get_devices_display() ->  String {
         portmidi::terminate().unwrap();
         devices
     };
-    
+
     let mut display = String::new();
     display.push_str("Id  Name                 Input? Output?\n");
     display.push_str("=======================================\n");
@@ -162,7 +162,7 @@ pub fn main() {
             println!("Error:2 create client {}",e);
             return;
         },
-    }; 
+    };
     loop {
         match client.step() {
             Ok(_) => (),
