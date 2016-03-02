@@ -1,6 +1,6 @@
 extern crate argparse;
 extern crate serde_json;
-extern crate miditip_common as common;
+extern crate common;
 
 use common::{
     ServerMsg,

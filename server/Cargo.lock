@@ -3,7 +3,7 @@ name = "miditip-server"
 version = "0.1.0"
 dependencies = [
  "argparse 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "miditip-common 0.1.0 (git+https://github.com/thiolliere/miditip-common.git)",
+ "common 0.1.0",
  "serde_json 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -26,6 +26,16 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "common"
+version = "0.1.0"
+dependencies = [
+ "serde 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_codegen 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_json 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "syntex 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "kernel32-sys"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -45,17 +55,6 @@ version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "miditip-common"
-version = "0.1.0"
-source = "git+https://github.com/thiolliere/miditip-common.git#791a5a490d76e22e4772239e8e3dd46f9372e955"
-dependencies = [
- "serde 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_codegen 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_json 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "syntex 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

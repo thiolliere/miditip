@@ -81,5 +81,3 @@ pub enum ClientMsg {
     NewPeer(SocketAddr),
 }
 
-fn encode_msg<T:Serialize>(msg: T) {
-}
