@@ -1,0 +1,85 @@
+use std::net::{
+    SocketAddr,
+};
+use std::collections::HashMap;
+
+#[derive(Serialize,Deserialize,Debug)]
+struct NoteState {
+    pub on: bool,
+    pub pitch: u8,
+    pub timestamp: u8,
+}
+
+impl NoteState {
+    fn new() -> NoteState {
+        NoteState {
+            on: false,
+            pitch: 0,
+            timestamp: 0,
+        }
+    }
+}
+
+#[derive(Serialize,Deserialize,Debug)]
+struct ChannelState {
+    pub instrument: u8,
+    pub controllers: HashMap<u8,u8>,
+    pub notes: HashMap<u8,NoteState>,
+}
+
+impl ChannelState {
+    fn new() -> ChannelState {
+        ChannelState {
+            instrument: 0,
+            controllers: HashMap::new(),
+            notes: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Serialize,Deserialize,Debug)]
+pub struct MidiState {
+    channels: [ChannelState;16],
+}
+
+impl MidiState {
+    pub fn new() -> MidiState {
+        let channels = [
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new(),
+            ChannelState::new()];
+
+        MidiState {
+            channels: channels,
+        }
+    }
+
+    //pub fn modify(&mut self, event: MidiEvent) {
+    //}
+}
+
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub enum ServerMsg {
+    NewPeerList(Vec<SocketAddr>),
+}
+
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub enum ClientMsg {
+    NewPeer(SocketAddr),
+}
+
+fn encode_msg<T:Serialize>(msg: T) {
+}

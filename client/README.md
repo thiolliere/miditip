@@ -1,4 +1,4 @@
-# miditip
+#Mititip
 
 MIDI Throught IP.
 early development. not 0.1 yet, go on your own way.
@@ -34,21 +34,13 @@ first you'll need to install:
 
 * build miditip:
   * `git clone https://github.com/thiolliere/miditip.git`
-  * `cd miditip/client`
-  * `cargo build --release` 
-    
-	the bin is made in ./target/release see
-
+  * `cd miditip`
+  * `cargo build --release`
   * `./target/release/miditip -h`
 
 * launch:
-  * `timidity -f -B 1.1 -iA &` 
-    
-	note that if the sound if too bad you can change -B x,x with x>1
-
+  * `timidity -f -B 1.1 -iA &` note that if the sound if too bad you can change -B x,x with x>1
   * `vkeybd &`
   * `miditip -d` to see the midi devices available
-  * `miditip 6 2 46.101.45.181:8888` 
-    
-	argument are `INPUT OUTPUT SERVER_IP:SERVER_PORT`
+  * `miditip 6 2 46.101.45.181:8888` argument are `INPUT OUTPUT SERVER_IP:SERVER_PORT`
  

@@ -1,0 +1,13 @@
+[package]
+name = "miditip-common"
+version = "0.1.0"
+authors = ["thiolliere <guillaume.thiolliere@opmbx.org>"]
+build = "build.rs"
+
+[build-dependencies]
+serde_codegen = "0.7.0"
+syntex = "0.29.0"
+
+[dependencies]
+serde = "0.7.0"
+serde_json = "0.7.0"
