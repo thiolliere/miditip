@@ -252,7 +252,7 @@ impl Client {
                     if let Err(e) = self.output.write_event(event) {
                         return Err(io::Error::new(io::ErrorKind::Other,e));
                     }
-                    println!("midi event from input {:#?}",self.midi_msg);
+                    //println!("midi event from input {:#?}",self.midi_msg);
                 },
                 Ok(None) => (),
                 Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput,e)),
@@ -264,7 +264,7 @@ impl Client {
                     if let Err(e) = self.output.write_message(midi_msg) {
                         return Err(io::Error::new(io::ErrorKind::Other,e));
                     }
-                    println!("midi message from peer {:?} {:#?}",addr,midi_msg);
+                    //println!("midi message from peer {:?} {:#?}",addr,midi_msg);
                 },
                 Ok((_,_)) => return Err(io::Error::new(io::ErrorKind::InvalidData,"")),
                 Err(e) => {
