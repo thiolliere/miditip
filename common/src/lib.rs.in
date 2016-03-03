@@ -1,23 +1,46 @@
+//TODO think about timestamp
+
 use std::net::{
     SocketAddr,
 };
 use std::collections::HashMap;
 
+fn channel(event: &[u8;4]) -> usize {
+    (  1*(event[0] & 0x01)
+     + 2*(event[0] & 0x02)
+     + 4*(event[0] & 0x04)
+     + 8*(event[0] & 0x08)) as usize
+}
+
+fn status(event: &[u8;4]) -> u8 {
+    event[0]/16
+}
+
+fn pitch(event: &[u8;4]) -> u8 {
+    event[1]
+}
+
+fn note(event: &[u8;4]) -> NoteState {
+    NoteState {
+        on: event[0] & 0x10 != 0,
+        velocity: event[2],
+        timestamp: event[3],
+    }
+}
+
+fn controller_nbr(event: &[u8;4]) -> u8 {
+    event[1]
+}
+
+fn controller_val(event: &[u8;4]) -> u8 {
+    event[2]
+}
+
 #[derive(Serialize,Deserialize,Debug)]
 struct NoteState {
     pub on: bool,
-    pub pitch: u8,
+    pub velocity: u8,
     pub timestamp: u8,
-}
-
-impl NoteState {
-    fn new() -> NoteState {
-        NoteState {
-            on: false,
-            pitch: 0,
-            timestamp: 0,
-        }
-    }
 }
 
 #[derive(Serialize,Deserialize,Debug)]
@@ -34,6 +57,26 @@ impl ChannelState {
             controllers: HashMap::new(),
             notes: HashMap::new(),
         }
+    }
+
+    fn modify(&mut self, event: &[u8;4]) {
+        match status(event) {
+            0b1001 | 0b1000 => {
+                let pitch = pitch(event);
+                let note = note(event);
+                self.notes.remove(&pitch);
+                self.notes.insert(pitch,note);
+            },
+            0b1100 => self.instrument = event[1],
+            0b1011 => {
+                let controller_nbr = controller_nbr(event);
+                let controller_val = controller_val(event);
+                self.controllers.remove(&controller_nbr);
+                self.controllers.insert(controller_nbr,controller_val);
+            }
+            _ => println!("midi event uncaught: {:?}",event),
+        }
+
     }
 }
 
@@ -67,8 +110,9 @@ impl MidiState {
         }
     }
 
-    //pub fn modify(&mut self, event: MidiEvent) {
-    //}
+    pub fn modify(&mut self, event: &[u8;4]) {
+        self.channels[channel(event)].modify(event)
+    }
 }
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
