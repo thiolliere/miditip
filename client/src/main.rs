@@ -74,8 +74,8 @@ fn from_midi_msg_to_raw(msg: MidiMessage) -> [u8;3] {
 fn init_udp_socket() -> io::Result<UdpSocket> {
     let timeout = Duration::new(0,1);
 
-    for p in 49152..65535 {
-        if let Ok(udp_socket) = UdpSocket::bind(("localhost",p)) {
+    for p in 8000..65535 {
+        if let Ok(udp_socket) = UdpSocket::bind(("0.0.0.0",p)) {
             try!(udp_socket.set_read_timeout(Some(timeout)));
             try!(udp_socket.set_write_timeout(Some(timeout)));
             return Ok(udp_socket);
@@ -91,9 +91,10 @@ fn init_server_stream(server_addr: SocketAddr,udp_socket_addr: SocketAddr) -> io
     let msg = serde_json::to_vec(&ClientMsg::NewPeer(udp_socket_addr)).unwrap();
     try!(server_stream.write_all(&msg));
     thread::spawn(move || {
+        let mut msg = [0u8;1024];
         loop {
-            let mut msg = Vec::new();
-            server_stream.read_to_end(&mut msg).unwrap();
+            let size  = server_stream.read(&mut msg).unwrap();
+            let (msg,_) = msg.split_at(size);
             tx.send(serde_json::from_slice(&msg).unwrap()).unwrap();
         }
     });
@@ -202,6 +203,7 @@ impl Client {
         println!("init udp socket");
         let udp_socket = try!(init_udp_socket());
         let addr = try!(udp_socket.local_addr());
+        println!("udp socket bind on {:?}",addr);
         println!("init tcp stream");
         let server_recv = try!(init_server_stream(options.server,addr));
 
@@ -250,19 +252,19 @@ impl Client {
                     if let Err(e) = self.output.write_event(event) {
                         return Err(io::Error::new(io::ErrorKind::Other,e));
                     }
-                    //println!("midi event from input {:#?}",self.midi_msg);
+                    println!("midi event from input {:#?}",self.midi_msg);
                 },
                 Ok(None) => (),
                 Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput,e)),
             }
 
             match self.udp_socket.recv_from(&mut self.midi_msg) {
-                Ok((3,_)) => {
+                Ok((3,addr)) => {
                     let midi_msg = from_raw_to_midi_msg(self.midi_msg);
                     if let Err(e) = self.output.write_message(midi_msg) {
                         return Err(io::Error::new(io::ErrorKind::Other,e));
                     }
-                    //println!("midi message from network {:#?}",midi_msg);
+                    println!("midi message from peer {:?} {:#?}",addr,midi_msg);
                 },
                 Ok((_,_)) => return Err(io::Error::new(io::ErrorKind::InvalidData,"")),
                 Err(e) => {
