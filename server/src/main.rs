@@ -7,13 +7,14 @@ use common::{
     ClientMsg,
 };
 use argparse::{
-    ArgumentParser, 
+    ArgumentParser,
     Store,
     Print,
 };
 use std::net::{
     SocketAddr,
     SocketAddrV4,
+    SocketAddrV6,
     Ipv4Addr,
     TcpListener,
 };
@@ -47,14 +48,25 @@ impl Server {
         let (server_tx,server_rx) = channel();
         thread::spawn(move || {
             loop {
-                if let Ok((mut stream,_)) = tcp_listener.accept() {
+                if let Ok((mut stream,peer_addr)) = tcp_listener.accept() {
+                    println!("new stream {:?}",peer_addr);
 
                     let mut msg = [0u8;1024];
 
                     if let Ok(size) = stream.read(&mut msg) {
                         let (msg,_) = msg.split_at(size);
                         let res: Result<ClientMsg,serde_json::Error> = serde_json::from_slice(&msg);
+                        println!("stream msg: {:?}",res);
                         if let Ok(ClientMsg::NewPeer(udp_socket_addr)) = res {
+                            let udp_port = match udp_socket_addr {
+                                SocketAddr::V4(addr) => addr.port(),
+                                SocketAddr::V6(addr) => addr.port(),
+                            };
+                            let udp_socket_addr = match peer_addr {
+                                SocketAddr::V4(addr) => SocketAddr::V4(SocketAddrV4::new( *addr.ip(), udp_port)),
+                                SocketAddr::V6(addr) => SocketAddr::V6(SocketAddrV6::new( *addr.ip(), udp_port, addr.flowinfo(), addr.scope_id())),
+                            };
+                            println!("udp socket :{}",udp_socket_addr);
                             if let Ok(mut stream_b) = stream.try_clone() {
 
                                 let (peer_tx,peer_rx) = channel();
@@ -136,7 +148,15 @@ pub fn main() {
         ap.parse_args_or_exit();
     }
 
-    let mut server = Server::new(addr).unwrap();
-    server.run().unwrap();
+    let mut server = match Server::new(addr) {
+        Ok(server) => server,
+        Err(e) => {
+            println!("Error: {}",e);
+            return;
+        }
+    };
+    if let Err(e) = server.run() {
+        println!("Error: {}",e);
+    }
 }
 
