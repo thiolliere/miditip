@@ -1,5 +1,5 @@
 [package]
-name = "client"
+name = "miditip"
 version = "0.1.0"
 authors = ["thiolliere <guillaume.thiolliere@opmbx.org>"]
 
