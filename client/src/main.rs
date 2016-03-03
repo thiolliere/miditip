@@ -259,12 +259,12 @@ impl Client {
             }
 
             match self.udp_socket.recv_from(&mut self.midi_msg) {
-                Ok((3,addr)) => {
+                Ok((3,_addr)) => {
                     let midi_msg = from_raw_to_midi_msg(self.midi_msg);
                     if let Err(e) = self.output.write_message(midi_msg) {
                         return Err(io::Error::new(io::ErrorKind::Other,e));
                     }
-                    //println!("midi message from peer {:?} {:#?}",addr,midi_msg);
+                    //println!("midi message from peer {:?} {:#?}",_addr,midi_msg);
                 },
                 Ok((_,_)) => return Err(io::Error::new(io::ErrorKind::InvalidData,"")),
                 Err(e) => {
