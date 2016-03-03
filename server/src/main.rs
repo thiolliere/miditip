@@ -75,6 +75,7 @@ impl Server {
 
                                 thread::spawn(move || {
                                     while let Ok(msg) = peer_rx.recv() {
+                                        println!("send msg to peer: {:?}",msg);
                                         if let Err(_) = stream.write_all(&serde_json::to_vec(&msg).unwrap()) {
                                             server_tx_b.send(Event::RemovePeer(udp_socket_addr)).unwrap();
                                             //do not break: it is the responsability of the server
@@ -109,9 +110,7 @@ impl Server {
             match self.server_rx.recv() {
                 Ok(Event::NewPeer(addr,peer_tx)) => {
                     println!("new peer: {}",addr);
-                    if self.peers.contains_key(&addr) {
-                        self.peers.remove(&addr);
-                    }
+                    self.peers.remove(&addr);
                     self.peers.insert(addr,peer_tx);
                     self.send_peer_list();
                 },
@@ -129,6 +128,7 @@ impl Server {
         let server_msg = ServerMsg::NewPeerList(self.peers.keys()
                                          .map(|addr| *addr)
                                          .collect());
+        println!("send new peer list: {:#?}",server_msg);
         for peer_tx in self.peers.values() {
             peer_tx.send(server_msg.clone()).unwrap();
         }
