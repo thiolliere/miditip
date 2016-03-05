@@ -1,76 +1,87 @@
-//TODO think about timestamp
-
 use std::net::{
     SocketAddr,
 };
 use std::collections::HashMap;
+use serde::ser::Serialize;
+use serde::de::Deserialize;
 
-fn channel(event: &[u8;4]) -> usize {
-    (  1*(event[0] & 0x01)
-     + 2*(event[0] & 0x02)
-     + 4*(event[0] & 0x04)
-     + 8*(event[0] & 0x08)) as usize
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub struct MiditipEvent {
+    pub status: u8,
+    pub data1: u8,
+    pub data2: u8,
+    pub peer_id: u8,
+    pub msg_id: u8,
 }
 
-fn status(event: &[u8;4]) -> u8 {
-    event[0]/16
-}
+impl MiditipEvent {
+    fn channel(&self) -> usize {
+        (self.status & 0x0F) as usize
+    }
 
-fn pitch(event: &[u8;4]) -> u8 {
-    event[1]
-}
+    fn opcode(&self) -> u8 {
+        self.status / 16
+    }
 
-fn note(event: &[u8;4]) -> NoteState {
-    NoteState {
-        on: event[0] & 0x10 != 0,
-        velocity: event[2],
-        timestamp: event[3],
+    fn note(&self) -> Note {
+        Note {
+            on: self.status & 0x10 != 0,
+            pitch: self.data1,
+            velocity: self.data2,
+        }
+    }
+
+    pub fn from_array(e: &[u8;5]) -> MiditipEvent {
+        MiditipEvent {
+            status: e[0],
+            data1: e[1],
+            data2: e[2],
+            peer_id: e[3],
+            msg_id: e[4],
+        }
+    }
+
+    pub fn to_array(&self) -> [u8;5] {
+        [self.status,self.data1,self.data2,self.peer_id,self.msg_id]
     }
 }
 
-fn controller_nbr(event: &[u8;4]) -> u8 {
-    event[1]
-}
-
-fn controller_val(event: &[u8;4]) -> u8 {
-    event[2]
-}
-
-#[derive(Serialize,Deserialize,Debug)]
-struct NoteState {
+#[derive(Serialize,Deserialize,Debug,Clone,PartialEq,Eq)]
+struct Note {
     pub on: bool,
+    pub pitch: u8,
     pub velocity: u8,
-    pub timestamp: u8,
 }
 
-#[derive(Serialize,Deserialize,Debug)]
-struct ChannelState {
+#[derive(Serialize,Deserialize,Debug,Clone)]
+struct Channel {
+    pub id: u8,
     pub instrument: u8,
     pub controllers: HashMap<u8,u8>,
-    pub notes: HashMap<u8,NoteState>,
+    pub notes: HashMap<u8,Note>,
 }
 
-impl ChannelState {
-    fn new() -> ChannelState {
-        ChannelState {
+impl Channel {
+    fn new(id: u8) -> Channel {
+        Channel {
+            id: id,
             instrument: 0,
             controllers: HashMap::new(),
             notes: HashMap::new(),
         }
     }
 
-    fn modify(&mut self, event: &[u8;4]) {
-        match status(event) {
+    fn modify(&mut self, event: MiditipEvent) {
+        match event.opcode() {
             0b1001 | 0b1000 => {
-                let pitch = pitch(event);
-                let note = note(event);
-                self.notes.remove(&pitch);
-                self.notes.insert(pitch,note);
+                let note = event.note();
+                self.notes.remove(&note.pitch);
+                self.notes.insert(note.pitch,note);
             },
-            0b1100 => self.instrument = event[1],
+            0b1100 => self.instrument = event.data1,
             0b1011 => {
-                let controller_nbr = controller_nbr(event);
-                let controller_val = controller_val(event);
+                let controller_nbr = event.data1;
+                let controller_val = event.data2;
                 self.controllers.remove(&controller_nbr);
                 self.controllers.insert(controller_nbr,controller_val);
             }
@@ -78,50 +89,161 @@ impl ChannelState {
         }
 
     }
+
+    fn resolve(&self, other: &Channel) -> Vec<[u8;3]> {
+        let mut msgs = Vec::new();
+        if self.instrument != other.instrument {
+            msgs.push([
+                      0b1100_0000 | self.id,
+                      other.instrument,
+                      0,
+            ]);
+        }
+
+        for (&id,&val) in &self.controllers {
+            match other.controllers.get(&id) {
+                Some(&other_val) => {
+                    if other_val != val {
+                        msgs.push([
+                                  0b1011_0000 | self.id,
+                                  id,
+                                  other_val
+                        ]);
+                    }
+                },
+                None => {
+                    //TODO is 0 the default value of controllers ?
+                    msgs.push([
+                              0b1011_0000 | self.id,
+                              id,
+                              0
+                    ])
+                }
+            }
+        }
+        for (&id,&val) in &other.controllers {
+            if !self.controllers.contains_key(&id) {
+                    msgs.push([
+                              0b1011_0000 | self.id,
+                              id,
+                              val
+                    ]);
+            }
+        }
+
+        for note in self.notes.values() {
+            match other.notes.get(&note.pitch) {
+                Some(other_note) => {
+                    if other_note != note {
+                        let status = if other_note.on {
+                                  0b1001_0000 | self.id
+                        } else {
+                                  0b1000_0000 | self.id
+                        };
+                        msgs.push([
+                                  status,
+                                  other_note.pitch,
+                                  other_note.velocity
+                        ]);
+                    }
+                },
+                None => {
+                        msgs.push([
+                                  0b1001_0000 | self.id,
+                                  note.pitch,
+                                  0
+                        ]);
+                }
+            }
+        }
+        for note in other.notes.values() {
+            if !self.notes.contains_key(&note.pitch) {
+                let status = if note.on {
+                    0b1001_0000 | self.id
+                } else {
+                    0b1000_0000 | self.id
+                };
+                msgs.push([
+                          status,
+                          note.pitch,
+                          note.velocity
+                ]);
+            }
+        }
+
+        msgs
+    }
 }
 
-#[derive(Serialize,Deserialize,Debug)]
-pub struct MidiState {
-    channels: [ChannelState;16],
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub struct MiditipState {
+    channels: Vec<Channel>,
+    peers: HashMap<u8,u8>,
 }
 
-impl MidiState {
-    pub fn new() -> MidiState {
-        let channels = [
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new(),
-            ChannelState::new()];
+impl MiditipState {
+    pub fn new() -> MiditipState {
+        let mut channels = Vec::with_capacity(16);
+        for i in 0..16 {
+            channels.push(Channel::new(i));
+        }
 
-        MidiState {
+        MiditipState {
             channels: channels,
+            peers: HashMap::new(),
         }
     }
 
-    pub fn modify(&mut self, event: &[u8;4]) {
-        self.channels[channel(event)].modify(event)
+    pub fn modify(&mut self, event: MiditipEvent) {
+        if let Some(&peer_msg_id) = self.peers.get(&event.peer_id) {
+            if peer_msg_id >= event.msg_id && peer_msg_id - event.msg_id < 128 {return;}
+        }
+        self.peers.remove(&event.peer_id);
+        self.peers.insert(event.peer_id,event.msg_id);
+        self.channels[event.channel()].modify(event);
     }
+
+    pub fn resolve(&self, other: &MiditipState) -> Vec<[u8;3]> {
+        let mut msgs = Vec::new();
+        for i in 0..16 {
+            let mut res = self.channels[i].resolve(&other.channels[i]);
+            msgs.append(&mut res);
+        }
+        msgs
+    }
+}
+
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub enum ServerInitMsg {
+    PeerId(u8),
+}
+
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub enum ClientInitMsg {
+    NewPeer(SocketAddr),
 }
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub enum ServerMsg {
     NewPeerList(Vec<SocketAddr>),
+    MiditipState(MiditipState),
 }
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub enum ClientMsg {
-    NewPeer(SocketAddr),
+    MiditipEvents(Vec<MiditipEvent>),
 }
 
+pub fn encode<T: Serialize>(msg: &T) -> serde_json::error::Result<([u8;2],Vec<u8>)> {
+    let code = try!(serde_json::to_vec(msg));
+    let len = code.len();
+    Ok(([(len / 256) as u8, len as u8],code))
+}
+
+pub fn decode_size(size: &[u8;2]) -> usize {
+    size[0] as usize * 256 + size[1] as usize
+}
+
+pub fn decode<T: Deserialize>(code: &[u8]) -> serde_json::error::Result<T> {
+    Ok(try!(serde_json::from_slice(code)))
+}
