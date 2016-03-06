@@ -140,9 +140,10 @@ Some argument are needed for real time playing.
   ```sh
   miditip 6 2 46.101.45.181:8888
   ```
+
 #troubleshooting
 
-##audio
+###audio
 
 you may also need to install `libasound2-dev` for using ALSA instead of OSS
 
