@@ -133,14 +133,17 @@ Some argument are needed for real time playing.
   ```sh
   timidity -f -B 1.1 -iA &
   ```
+
 * launch the midi input device
   ```sh
   vkeybd &
   ```
+
 * look at the midi devices available
   ```sh
   miditip -d
   ```
+
 * launch miditip an the input device 6 the output device 2 and the server 46.101.45.181:8888
   ```sh
   miditip 6 2 46.101.45.181:8888
