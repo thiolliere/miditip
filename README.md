@@ -78,24 +78,33 @@ it has been tested on rust1.7
 instructions are for Ubuntu / Debian, but you may be able to adapt on other distribution.
 
 * install rust stable compiler available [there](https://www.rust-lang.org/downloads.html)
+
 * get the source code
+
   ```sh
   git clone https://github.com/thiolliere/miditip.git
   ```
+
 * go to the directory
+
   ```sh
   cd miditip/client
   ```
+
   (or for the server
   ```sh
   cd miditip/server
   ```
   )
+
 * compile
+
   ```sh
   cargo build --release
   ```
+
 * execute with help
+
   ```sh
   ./target/release/miditip -h
   ```
