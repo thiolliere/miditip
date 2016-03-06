@@ -11,3 +11,4 @@ syntex = "0.29.0"
 [dependencies]
 serde = "0.7.0"
 serde_json = "0.7.0"
+rust-lzma = "0.2.0"

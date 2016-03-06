@@ -6,4 +6,3 @@ authors = ["thiolliere <guillaume.thiolliere@opmbx.org>"]
 [dependencies]
 argparse = "0.2.0"
 common = { path = "../common" }
-serde_json = "0.7.0"

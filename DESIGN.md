@@ -27,46 +27,4 @@
 
 centralized authority.
 
-```
-###OLD udp protocol:
-
-* message:
-  * id of the later message: i32 // the packet id 0 contain message 0 to -n
-  * message[id]: Midi
-  * message[id-1]: Midi
-  * message[id-2]: Midi
-  * ...
-  * message[id-n]: Midi
-
-
-###OLD tcp protocol
-
-* request introduction
-* answer introduction request: (channel,peers)
-* introduce itself
-* request the state (all critical state variable: instruement, ..it's all?)
-* answer state request: (id,state)
-* quit
-```
-
-##Midi output suggestions
-
-* **timidiy**: some parameters for real time playing:
-  * `-B 1,1` buffer fragments
-  * `-f` toggles fast enveloppes
-
-##TODO
-
-* client and server in the same git
-* midi state structure
-* error detection and resolution:
-  (inspired by real time multiplayer game method)
-  * a thread receive every midi event (from input after being send through udp, from peers after being send to midi outpun).
-  * it send to the authority the midi event through tcp (bundle into packet)
-  * it receive authority midi state every tick:
-    the midi snapshot contain the current midi state and for each peers the last timestamp computed.
-  * on recv:
-    it add to the snapshot all local midi event with timestamp > those contained by the snapshot.
-	if local midi state is different from snapshot recomputation then it resolve the difference by
-	sending some event to the local output
-
+I would love to make it completely peer to peer. but it is way more difficult...

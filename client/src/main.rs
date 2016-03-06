@@ -1,6 +1,5 @@
 extern crate argparse;
 extern crate portmidi;
-extern crate serde_json;
 extern crate common;
 
 use common::{
@@ -10,6 +9,8 @@ use common::{
     ServerMsg,
     MiditipState,
     MiditipEvent,
+    send,
+    recv,
 };
 use argparse::{
     ArgumentParser,
@@ -24,11 +25,7 @@ use std::net::{
     Ipv4Addr,
 };
 use std::io;
-use std::io::{
-    Read,
-    Write,
-    ErrorKind,
-};
+use std::io::ErrorKind;
 use std::time::Duration;
 use portmidi::{
     PortMidiDeviceId,
@@ -48,7 +45,7 @@ use std::sync::mpsc::{
 
 enum Event {
     NewPeerList(Vec<SocketAddr>),
-    MidiMessage(Vec<MidiMessage>),
+    MidiMessages(Vec<MidiMessage>),
 }
 
 fn init_portmidi(input_id: PortMidiDeviceId, output_id: PortMidiDeviceId) -> PortMidiResult<(InputPort,OutputPort)> {
@@ -57,13 +54,13 @@ fn init_portmidi(input_id: PortMidiDeviceId, output_id: PortMidiDeviceId) -> Por
     let device = try!(portmidi::get_device_info(input_id).ok_or(InvalidDeviceId));
     println!("Opening: {}", device.name);
 
-    let mut input = portmidi::InputPort::new(input_id, 1024);
+    let mut input = portmidi::InputPort::new(input_id, 4096);
     try!(input.open());
 
     let device = try!(portmidi::get_device_info(output_id).ok_or(InvalidDeviceId));
     println!("Opening: {}", device.name);
 
-    let mut output = portmidi::OutputPort::new(output_id, 1024);
+    let mut output = portmidi::OutputPort::new(output_id, 4096);
     try!(output.open());
 
     Ok((input,output))
@@ -94,66 +91,52 @@ fn init_server_stream(server_addr: SocketAddr,udp_socket_addr: SocketAddr) -> io
     let (event_tx,event_rx) = channel();
     let (thread_tx,thread_rx) = channel();
 
-    let mut server_stream = try!(TcpStream::connect(server_addr));
-    let msg = serde_json::to_vec(&ClientInitMsg::NewPeer(udp_socket_addr)).unwrap();
-    try!(server_stream.write_all(&msg));
-    try!(server_stream.set_read_timeout(Some(Duration::from_secs(5))));
-    let mut buffer = [0u8;1024];
-    let size = try!(server_stream.read(&mut buffer));
-    let (server_init_msg,_) = buffer.split_at(size);
-    let peer_id = match serde_json::from_slice(server_init_msg) {
-        Ok(ServerInitMsg::PeerId(peer_id)) => peer_id,
-        Err(e) => return Err(io::Error::new(io::ErrorKind::Other,e)),
+    let mut stream = try!(TcpStream::connect(server_addr));
+    try!(send(&ClientInitMsg::NewPeer(udp_socket_addr.port()), &mut stream));
+    try!(stream.set_read_timeout(Some(Duration::from_secs(5))));
+    let mut buffer = [0u8;4096];
+    let peer_id = match try!(recv(&mut buffer, &mut stream)) {
+        ServerInitMsg::PeerId(id) => id,
     };
-    try!(server_stream.set_read_timeout(Some(Duration::from_millis(1))));
+    try!(stream.set_read_timeout(Some(Duration::from_millis(10))));
     thread::spawn(move || {
-        let mut msg = [0u8;1024];
         let mut miditip_state = MiditipState::new();
-        let mut miditip_events_to_send = Vec::new();
         let mut miditip_events: Vec<MiditipEvent> = Vec::new();
-        let mut time = 0;
         loop {
-            time += 1;
-            if time > 500 || miditip_events_to_send.len() > 50 {
-                time = 0;
-                server_stream.write_all(&serde_json::to_vec(&ClientMsg::MiditipEvents(miditip_events_to_send.drain(..).collect())).unwrap()).unwrap();
-            }
-            match server_stream.read(&mut msg) {
-                Ok(size) => {
-                    let (msg,_) = msg.split_at(size);
-                    match serde_json::from_slice(&msg).unwrap() {
-                        ServerMsg::NewPeerList(list) => event_tx.send(Event::NewPeerList(list)).unwrap(),
-                        ServerMsg::MiditipState(mut server_miditip_state) => {
-                            for event in &miditip_events {
-                                server_miditip_state.modify(event.clone());
-                            }
-                            let msgs= miditip_state.resolve(&server_miditip_state)
-                                .iter()
-                                .map(|&me| MidiMessage {
-                                    status: me[0],
-                                    data1: me[1],
-                                    data2: me[2]})
-                                .collect();
-                            event_tx.send(Event::MidiMessage(msgs)).unwrap();
-                        },
-                    }
+            match recv(&mut buffer, &mut stream) {
+                Ok(ServerMsg::NewPeerList(list)) => event_tx.send(Event::NewPeerList(list)).unwrap(),
+                Ok(ServerMsg::MiditipState(mut server_miditip_state)) => {
+                    miditip_events.retain(|event| {
+                        server_miditip_state.modify(event)
+                    });
+                    let msgs = miditip_state.resolve(&server_miditip_state)
+                        .iter()
+                        .map(|&me| MidiMessage {
+                            status: me[0],
+                            data1: me[1],
+                            data2: me[2]})
+                        .collect();
+                    event_tx.send(Event::MidiMessages(msgs)).unwrap();
                 },
                 Err(e) => {
                     match e.kind() {
                         ErrorKind::TimedOut | ErrorKind::WouldBlock => (),
-                        _ => break,
+                        _ => {
+                            println!("recv error: {} \n kind:{:#?}",e,e.kind());
+                            return;
+                        }
                     }
                 }
             }
             match thread_rx.try_recv() {
-                Ok(miditip_msg) => {
-                    let miditip_msg = MiditipEvent::from_array(&miditip_msg);
-                    miditip_state.modify(miditip_msg.clone());
-                    miditip_events.push(miditip_msg.clone());
-                    miditip_events_to_send.push(miditip_msg);
+                Ok(miditip_event) => {
+                    let miditip_event = MiditipEvent::from_array(&miditip_event);
+                    miditip_state.modify(&miditip_event);
+                    miditip_events.push(miditip_event.clone());
+                    send(&ClientMsg::MiditipEvent(miditip_event), &mut stream).unwrap();
                 },
                 Err(TryRecvError::Empty) => (),
-                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Disconnected) => return,
             }
         }
     });
@@ -223,13 +206,11 @@ pub fn main() {
             return;
         },
     };
-    loop {
-        match client.step() {
-            Ok(_) => (),
-            Err(e) => {
-                println!("Error:3 updating client {}",e);
-                return;
-            }
+    match client.run() {
+        Ok(_) => (),
+        Err(e) => {
+            println!("Error:3 run client {}",e);
+            return;
         }
     }
 }
@@ -243,7 +224,6 @@ struct Client {
     event_receiver: Receiver<Event>,
     thread_sender: Sender<[u8;5]>,
     peers: Vec<SocketAddr>,
-    udp_socket_addr: SocketAddr,
     miditip_msg_buffer: [u8;5],
 }
 
@@ -269,7 +249,6 @@ impl Client {
             input: input,
             output: output,
             udp_socket: udp_socket,
-            udp_socket_addr: addr,
             event_receiver: recv,
             thread_sender: sndr,
             peers: vec!(),
@@ -279,7 +258,7 @@ impl Client {
 
     ///! wrap the midi_message into a miditip_event for the peer
     fn miditip_event(&mut self, midi_message: MidiMessage) -> MiditipEvent {
-        self.msg_id += 1;
+        self.msg_id.wrapping_add(1);
         MiditipEvent {
             status: midi_message.status,
             data1: midi_message.data1,
@@ -289,30 +268,23 @@ impl Client {
         }
     }
 
-    fn step(&mut self) -> io::Result<()> {
-        match self.event_receiver.try_recv() {
-            Ok(Event::NewPeerList(mut list)) => {
-                println!("receive list: {:#?}",list);
-                list.retain(|&addr| addr != self.udp_socket_addr);
-                self.peers = list;
-            },
-            Ok(Event::MidiMessage(vector)) => {
-                for midi_msg in vector {
-                    if let Err(e) = self.output.write_message(midi_msg) {
-                        return Err(io::Error::new(io::ErrorKind::Other,e));
+    fn run(&mut self) -> io::Result<()> {
+        loop {
+            match self.event_receiver.try_recv() {
+                Ok(Event::NewPeerList(list)) => { self.peers = list; },
+                Ok(Event::MidiMessages(midi_msgs)) => {
+                    for midi_msg in midi_msgs {
+                        try!(self.output.write_message(midi_msg)
+                             .map_err(|e| io::Error::new(io::ErrorKind::Other,e)));
+                        println!("midi event from resolution {:#?}",midi_msg);
+                        let miditip_msg = self.miditip_event(midi_msg).to_array();
+                        try!(self.thread_sender.send(miditip_msg)
+                             .map_err(|e| io::Error::new(io::ErrorKind::Other,e)));
                     }
-                    println!("midi event from resolution {:#?}",midi_msg);
-                    let miditip_msg = self.miditip_event(midi_msg).to_array();
-                    if let Err(e) = self.thread_sender.send(miditip_msg) {
-                        return Err(io::Error::new(io::ErrorKind::Other,e));
-                    }
-                }
-            },
-            Err(TryRecvError::Empty) => (),
-            Err(TryRecvError::Disconnected) => return Err(io::Error::new(io::ErrorKind::Other,"server connection failed")),
-        }
-
-        for _ in 0..5 {
+                },
+                Err(TryRecvError::Empty) => (),
+                Err(TryRecvError::Disconnected) => return Err(io::Error::new(io::ErrorKind::Other,"server connection failed")),
+            }
             match self.input.read() {
                 Ok(Some(event)) => {
                     let miditip_event = self.miditip_event(event.message);
@@ -320,27 +292,22 @@ impl Client {
                     for &peer in &self.peers {
                         try!(self.udp_socket.send_to(&miditip_event_array,peer));
                     }
-                    if let Err(e) = self.output.write_event(event) {
-                        return Err(io::Error::new(io::ErrorKind::Other,e));
-                    }
-                    if let Err(e) = self.thread_sender.send(miditip_event_array) {
-                        return Err(io::Error::new(io::ErrorKind::Other,e));
-                    }
+                    try!(self.output.write_event(event)
+                         .map_err(|e| io::Error::new(io::ErrorKind::Other,e)));
+                    try!(self.thread_sender.send(miditip_event_array)
+                         .map_err(|e| io::Error::new(io::ErrorKind::Other,e)));
                     println!("midi event from input {:#?}",miditip_event);
                 },
                 Ok(None) => (),
                 Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput,e)),
             }
-
             match self.udp_socket.recv_from(&mut self.miditip_msg_buffer) {
                 Ok((5,_addr)) => {
                     let midi_msg = from_raw_miditip_event_to_midi_msg(&self.miditip_msg_buffer);
-                    if let Err(e) = self.output.write_message(midi_msg) {
-                        return Err(io::Error::new(io::ErrorKind::Other,e));
-                    }
-                    if let Err(e) = self.thread_sender.send(self.miditip_msg_buffer) {
-                        return Err(io::Error::new(io::ErrorKind::Other,e));
-                    }
+                    try!(self.output.write_message(midi_msg)
+                         .map_err(|e| io::Error::new(io::ErrorKind::Other,e)));
+                    try!(self.thread_sender.send(self.miditip_msg_buffer)
+                         .map_err(|e| io::Error::new(io::ErrorKind::Other,e)));
                     println!("midi message from peer {:?} {:#?}",_addr,midi_msg);
                 },
                 Ok((_,_)) => return Err(io::Error::new(io::ErrorKind::InvalidData,"")),
@@ -352,7 +319,6 @@ impl Client {
                 }
             }
         }
-
-        Ok(())
     }
 }
+

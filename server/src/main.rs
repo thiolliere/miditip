@@ -1,5 +1,4 @@
 extern crate argparse;
-extern crate serde_json;
 extern crate common;
 
 use common::{
@@ -8,7 +7,8 @@ use common::{
     ClientInitMsg,
     ClientMsg,
     MiditipState,
-    MiditipEvent,
+    send,
+    recv,
 };
 use argparse::{
     ArgumentParser,
@@ -21,211 +21,91 @@ use std::net::{
     SocketAddrV6,
     Ipv4Addr,
     TcpListener,
+    TcpStream,
 };
 use std::io;
-use std::io::{
-    Write,
-    Read,
-    ErrorKind,
-};
+use std::io::ErrorKind;
 use std::collections::HashMap;
 use std::sync::mpsc::{
-    Sender,
     Receiver,
     channel,
     TryRecvError,
 };
 use std::thread;
 use std::time::Duration;
-use std::sync::{ Arc, Mutex };
-
-enum Event {
-    RemovePeer(u8),
-    NewPeer(Peer),
-    MiditipEvents(Vec<MiditipEvent>),
-    Second,
-}
 
 struct Peer {
     id: u8,
     addr: SocketAddr,
-    sender: Sender<ServerMsg>,
+    stream: TcpStream,
 }
 
 struct Server {
-    server_rx: Receiver<Event>,
+    buffer: [u8;4096],
     peers: HashMap<u8,Peer>,
-    peer_id_used: Arc<Mutex<Vec<u8>>>,
     miditip_state: MiditipState,
+    listener: Receiver<(TcpStream,SocketAddr)>,
 }
 
 impl Server {
     fn new(addr: SocketAddr) -> io::Result<Server> {
         let tcp_listener = try!(TcpListener::bind(addr));
-        let peer_id_used = Arc::new(Mutex::new(Vec::new()));
-        let peer_id_used_clone = peer_id_used.clone();
-
-        let (server_tx,server_rx) = channel();
-
-        {
-            let server_tx = server_tx.clone();
-            thread::spawn(move || {
-                loop {
-                    thread::sleep(Duration::from_secs(1));
-                    server_tx.send(Event::Second).unwrap();
-                }
-            });
-        }
-
+        let (listener_tx,listener_rx) = channel();
         thread::spawn(move || {
-            loop {
-                if let Ok((mut stream,peer_addr)) = tcp_listener.accept() {
-                    println!("new stream {:?}",peer_addr);
-
-                    let mut msg = [0u8;1024];
-
-                    if let Err(_) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
-                        println!("fail to set read timemout");
-                        continue;
-                    }
-                    if let Ok(size) = stream.read(&mut msg) {
-                        let (msg,_) = msg.split_at(size);
-                        let res: Result<ClientInitMsg,serde_json::Error> = serde_json::from_slice(&msg);
-                        println!("stream msg: {:?}",res);
-                        if let Ok(ClientInitMsg::NewPeer(udp_socket_addr)) = res {
-                            let peer_id = {
-                                let mut list = peer_id_used.lock().unwrap();
-                                let mut id = None;
-                                for i in 0..255 {
-                                    if !list.contains(&i) {
-                                        list.push(i);
-                                        id = Some(i);
-                                        break;
-                                    }
-                                }
-                                id
-                            };
-                            if let Some(peer_id) = peer_id {
-                                let msg = ServerInitMsg::PeerId(peer_id);
-                                if let Err(_) = stream.write_all(&serde_json::to_vec(&msg).expect("serde json fail1")) {
-                                    println!("fail to set write server init msg");
-                                    continue;
-                                }
-                                let udp_port = match udp_socket_addr {
-                                    SocketAddr::V4(addr) => addr.port(),
-                                    SocketAddr::V6(addr) => addr.port(),
-                                };
-                                let udp_socket_addr = match peer_addr {
-                                    SocketAddr::V4(addr) => SocketAddr::V4(SocketAddrV4::new( *addr.ip(), udp_port)),
-                                    SocketAddr::V6(addr) => SocketAddr::V6(SocketAddrV6::new( *addr.ip(), udp_port, addr.flowinfo(), addr.scope_id())),
-                                };
-                                println!("udp socket :{}",udp_socket_addr);
-                                let (peer_tx,peer_rx) = channel();
-                                let server_tx_b = server_tx.clone();
-
-                                if let Err(_) = stream.set_read_timeout(Some(Duration::from_millis(10))) {
-                                    println!("fail to set read timemout");
-                                    continue;
-                                }
-
-                                let peer = Peer {
-                                    id: peer_id,
-                                    addr: udp_socket_addr,
-                                    sender: peer_tx,
-                                };
-
-                                thread::spawn(move || {
-                                    let mut buffer = [0u8;1024];
-
-                                    loop {
-                                        match peer_rx.try_recv() {
-                                            Ok(ServerMsg::MiditipState(miditip_state)) => {
-                                                //TODO
-                                                //if let Err(_) = stream.write_all(&serde_json::to_vec(&ServerMsg::MiditipState(miditip_state)).expect("serde json fail2")) {
-                                                //    server_tx_b.send(Event::RemovePeer(peer_id)).unwrap();
-                                                //    //do not break: it is the responsability of the server
-                                                //    //to end the channel
-                                                //}
-                                            },
-                                            Ok(ServerMsg::NewPeerList(list)) => {
-                                                if let Err(_) = stream.write_all(&serde_json::to_vec(&ServerMsg::NewPeerList(list)).expect("serde json fail3")) {
-                                                    server_tx_b.send(Event::RemovePeer(peer_id)).unwrap();
-                                                    //do not break: it is the responsability of the server
-                                                    //to end the channel
-                                                }
-                                            }
-                                            Err(TryRecvError::Empty) => (),
-                                            Err(TryRecvError::Disconnected) => return,
-                                        }
-                                        match stream.read(&mut buffer) {
-                                            Ok(size) => {
-                                                let (msg,_) = buffer.split_at(size);
-                                                let res: Result<ClientMsg,serde_json::Error> = serde_json::from_slice(&msg);
-                                                match res {
-                                                    Ok(ClientMsg::MiditipEvents(events)) => server_tx_b.send(Event::MiditipEvents(events)).unwrap(),
-                                                    Err(_) => server_tx_b.send(Event::RemovePeer(peer_id)).unwrap(),
-                                                }
-                                            },
-                                            Err(e) => {
-                                                match e.kind() {
-                                                    ErrorKind::WouldBlock | ErrorKind::TimedOut => (),
-                                                    _ => server_tx_b.send(Event::RemovePeer(peer_id)).unwrap(),
-                                                    //do not break: it is the responsability of the server
-                                                    //to end the channel
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
-                                if let Err(_) = server_tx.send(Event::NewPeer(peer)) {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+            while let Ok((stream,addr)) = tcp_listener.accept() {
+                listener_tx.send((stream,addr)).unwrap();
             }
         });
 
         Ok(Server {
-            server_rx: server_rx,
+            buffer: [0u8;4096],
             peers: HashMap::new(),
-            peer_id_used: peer_id_used_clone,
             miditip_state: MiditipState::new(),
+            listener: listener_rx,
         })
     }
 
-    fn run(&mut self) -> io::Result<()> {
-        loop {
-            match self.server_rx.recv() {
-                Ok(Event::NewPeer(peer)) => {
-                    println!("new peer: {}",peer.id);
-                        self.peers.insert(peer.id,peer);
-                        self.send_peer_list();
-                },
-                Ok(Event::RemovePeer(peer_id)) => {
-                    println!("remove peer: {}",peer_id);
-                    {
-                        let mut list = self.peer_id_used.lock().unwrap();
-                        list.retain(|&id| id != peer_id);
-                        self.peers.remove(&peer_id);
-
-                    }
-                    self.send_peer_list();
-                },
-                Ok(Event::MiditipEvents(events)) => {
-                    for event in events {
-                        self.miditip_state.modify(event);
-                    }
-                },
-                Ok(Event::Second) => {
-                    for peer in self.peers.values() {
-                        peer.sender.send(ServerMsg::MiditipState(self.miditip_state.clone())).unwrap();
-                    }
-                },
-                Err(_) => return Err(io::Error::new(io::ErrorKind::Other,"server_rx disconnected")),
+    fn unused_peer_id(&self) -> Option<u8> {
+        for i in 0..255 {
+            if !self.peers.contains_key(&i) {
+                return Some(i);
             }
         }
+        if !self.peers.contains_key(&255) {
+            Some(255)
+        } else {
+            None
+        }
+
+    }
+
+    fn accept_peer(&mut self, mut stream: TcpStream, addr: SocketAddr) -> io::Result<()> {
+        try!(stream.set_read_timeout(Some(Duration::from_secs(2))));
+        let port = match try!(recv(&mut self.buffer, &mut stream)) {
+            ClientInitMsg::NewPeer(port) => port,
+        };
+        let id = try!(self.unused_peer_id().ok_or(io::Error::new(io::ErrorKind::Other,"FullSession")));
+        try!(send(&ServerInitMsg::PeerId(id), &mut stream));
+        let udp_socket_addr = match addr {
+            SocketAddr::V4(addr) => SocketAddr::V4(SocketAddrV4::new( *addr.ip(), port)),
+            SocketAddr::V6(addr) => SocketAddr::V6(SocketAddrV6::new( *addr.ip(), port, addr.flowinfo(), addr.scope_id())),
+        };
+        try!(stream.set_read_timeout(Some(Duration::from_millis(20))));
+
+        let peer = Peer {
+            id: id,
+            addr: udp_socket_addr,
+            stream: stream,
+        };
+        self.peers.insert(peer.id,peer);
+        self.send_peer_list();
+        Ok(())
+    }
+
+    fn remove_peer(&mut self, id: u8) {
+        println!("remove peer: {}",id);
+        self.peers.remove(&id);
+        self.send_peer_list();
     }
 
     fn send_peer_list(&mut self) {
@@ -233,10 +113,70 @@ impl Server {
             .map(|peer| peer.addr)
             .collect();
         println!("send new peer list: {:#?}",peer_list);
-        for peer in self.peers.values() {
+        let mut tokill = Vec::new();
+        for (_,peer) in &mut self.peers {
             let mut other_peer_list = peer_list.clone();
             other_peer_list.retain(|&addr| addr != peer.addr);
-            peer.sender.send(ServerMsg::NewPeerList(other_peer_list)).unwrap();
+            match send(&ServerMsg::NewPeerList(other_peer_list), &mut peer.stream) {
+                Ok(()) => (),
+                Err(e) => match e.kind() {
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut => (),
+                    _ => tokill.push(peer.id),
+                },
+            }
+        }
+        for id in tokill {
+            self.remove_peer(id);
+        }
+    }
+
+    fn run(&mut self) -> io::Result<()> {
+        let mut counter_timer = 0;
+        loop {
+            match self.listener.try_recv() {
+                Ok((stream,addr)) => {
+                    match self.accept_peer(stream,addr) {
+                        Ok(()) => println!("peer accepted"),
+                        Err(e) => println!("peer refused: {}",e),
+                    }
+                },
+                Err(TryRecvError::Empty) => (),
+                Err(TryRecvError::Disconnected) => return Err(io::Error::new(io::ErrorKind::ConnectionAborted,"listener channel disconnected")),
+            }
+            let mut tokill = Vec::new();
+            for (_,peer) in &mut self.peers {
+                match recv(&mut self.buffer, &mut peer.stream) {
+                    Ok(msg) => match msg {
+                        ClientMsg::MiditipEvent(event) => {self.miditip_state.modify(&event);},
+                    },
+                    Err(e) => match e.kind() {
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut => (),
+                        _ => tokill.push(peer.id),
+                    },
+                }
+            }
+            for id in tokill {
+                self.remove_peer(id);
+            }
+
+            let mut tokill = Vec::new();
+            if counter_timer > 10 {
+                counter_timer = 0;
+                for (_,peer) in &mut self.peers {
+                    match send(&ServerMsg::MiditipState(self.miditip_state.clone()),&mut peer.stream) {
+                        Ok(()) => (),
+                        Err(_e) => {
+                            println!("error while send miditipState: {}",_e);
+                            tokill.push(peer.id);
+                        }
+                    }
+                }
+            } else {
+                counter_timer += 1;
+            }
+            for id in tokill {
+                self.remove_peer(id);
+            }
         }
     }
 }

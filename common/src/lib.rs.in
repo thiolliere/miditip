@@ -1,9 +1,20 @@
 use std::net::{
     SocketAddr,
+    TcpStream,
 };
-use std::collections::HashMap;
+use std::io;
+use std::io::{
+    Write,
+    Read,
+};
 use serde::ser::Serialize;
 use serde::de::Deserialize;
+use serde_json::error::Error as SerdeJsonError;
+use lzma::error::LzmaError;
+use lzma::{
+    compress,
+    decompress,
+};
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub struct MiditipEvent {
@@ -57,8 +68,8 @@ struct Note {
 struct Channel {
     pub id: u8,
     pub instrument: u8,
-    pub controllers: HashMap<u8,u8>,
-    pub notes: HashMap<u8,Note>,
+    pub controllers: Vec<(u8,u8)>,
+    pub notes: Vec<Note>,
 }
 
 impl Channel {
@@ -66,24 +77,24 @@ impl Channel {
         Channel {
             id: id,
             instrument: 0,
-            controllers: HashMap::new(),
-            notes: HashMap::new(),
+            controllers: Vec::new(),
+            notes: Vec::new(),
         }
     }
 
-    fn modify(&mut self, event: MiditipEvent) {
+    fn modify(&mut self, event: &MiditipEvent) {
         match event.opcode() {
             0b1001 | 0b1000 => {
-                let note = event.note();
-                self.notes.remove(&note.pitch);
-                self.notes.insert(note.pitch,note);
+                let event_note = event.note();
+                self.notes.retain(|note| note.pitch != event_note.pitch);
+                self.notes.push(event_note);
             },
             0b1100 => self.instrument = event.data1,
             0b1011 => {
                 let controller_nbr = event.data1;
                 let controller_val = event.data2;
-                self.controllers.remove(&controller_nbr);
-                self.controllers.insert(controller_nbr,controller_val);
+                self.controllers.retain(|&(nbr,_)| nbr != controller_nbr);
+                self.controllers.push((controller_nbr,controller_val));
             }
             _ => println!("midi event uncaught: {:?}",event),
         }
@@ -100,9 +111,9 @@ impl Channel {
             ]);
         }
 
-        for (&id,&val) in &self.controllers {
-            match other.controllers.get(&id) {
-                Some(&other_val) => {
+        for &(id,val) in &self.controllers {
+            match other.controllers.iter().find(|&&(other_id,_)| other_id == id) {
+                Some(&(_,other_val)) => {
                     if other_val != val {
                         msgs.push([
                                   0b1011_0000 | self.id,
@@ -121,24 +132,24 @@ impl Channel {
                 }
             }
         }
-        for (&id,&val) in &other.controllers {
-            if !self.controllers.contains_key(&id) {
-                    msgs.push([
-                              0b1011_0000 | self.id,
-                              id,
-                              val
-                    ]);
+        for &(id,val) in &other.controllers {
+            if self.controllers.iter().find(|&&(cid,_)| cid == id).is_none() {
+                msgs.push([
+                          0b1011_0000 | self.id,
+                          id,
+                          val
+                ]);
             }
         }
 
-        for note in self.notes.values() {
-            match other.notes.get(&note.pitch) {
+        for note in &self.notes {
+            match other.notes.iter().find(|other_note| other_note.pitch == note.pitch) {
                 Some(other_note) => {
                     if other_note != note {
                         let status = if other_note.on {
-                                  0b1001_0000 | self.id
+                            0b1001_0000 | self.id
                         } else {
-                                  0b1000_0000 | self.id
+                            0b1000_0000 | self.id
                         };
                         msgs.push([
                                   status,
@@ -148,25 +159,25 @@ impl Channel {
                     }
                 },
                 None => {
-                        msgs.push([
-                                  0b1001_0000 | self.id,
-                                  note.pitch,
-                                  0
-                        ]);
+                    msgs.push([
+                              0b1001_0000 | self.id,
+                              note.pitch,
+                              0
+                    ]);
                 }
             }
         }
-        for note in other.notes.values() {
-            if !self.notes.contains_key(&note.pitch) {
-                let status = if note.on {
+        for other_note in &other.notes {
+            if self.notes.iter().find(|note| note.pitch != other_note.pitch).is_none() {
+                let status = if other_note.on {
                     0b1001_0000 | self.id
                 } else {
                     0b1000_0000 | self.id
                 };
                 msgs.push([
                           status,
-                          note.pitch,
-                          note.velocity
+                          other_note.pitch,
+                          other_note.velocity
                 ]);
             }
         }
@@ -178,7 +189,7 @@ impl Channel {
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub struct MiditipState {
     channels: Vec<Channel>,
-    peers: HashMap<u8,u8>,
+    peers: Vec<(u8,u8)>,
 }
 
 impl MiditipState {
@@ -190,17 +201,34 @@ impl MiditipState {
 
         MiditipState {
             channels: channels,
-            peers: HashMap::new(),
+            peers: Vec::new(),
         }
     }
 
-    pub fn modify(&mut self, event: MiditipEvent) {
-        if let Some(&peer_msg_id) = self.peers.get(&event.peer_id) {
-            if peer_msg_id >= event.msg_id && peer_msg_id - event.msg_id < 128 {return;}
+    /// return whereas the event have modified the state,
+    /// it doesn't modify the state if the message id is superior and to
+    /// far in the futur or inferior and not far enough in the past
+    ///
+    /// farness is 128
+    pub fn modify(&mut self, event: &MiditipEvent) -> bool {
+        if let Some(&(_,peer_msg_id)) = self.peers.iter().find(|(id,_) id == event.peer_id) {
+            let modify = if peer_msg_id == event.msg_id {
+                false
+            } else if peer_msg_id > event.msg_id {
+                peer_msg_id - event.msg_id > 128
+            } else {
+                event.msg_id - peer_msg_id < 128
+            };
+
+            if modify {
+                self.peers.retain(|(id,_)| id != event.peer_id);
+            } else {
+                return false;
+            }
         }
-        self.peers.remove(&event.peer_id);
-        self.peers.insert(event.peer_id,event.msg_id);
-        self.channels[event.channel()].modify(event);
+        self.peers.push((event.peer_id,event.msg_id));
+        self.channels[event.channel()].modify(&event);
+        true
     }
 
     pub fn resolve(&self, other: &MiditipState) -> Vec<[u8;3]> {
@@ -220,7 +248,7 @@ pub enum ServerInitMsg {
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub enum ClientInitMsg {
-    NewPeer(SocketAddr),
+    NewPeer(u16),
 }
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
@@ -231,19 +259,68 @@ pub enum ServerMsg {
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub enum ClientMsg {
-    MiditipEvents(Vec<MiditipEvent>),
+    MiditipEvent(MiditipEvent),
 }
 
-pub fn encode<T: Serialize>(msg: &T) -> serde_json::error::Result<([u8;2],Vec<u8>)> {
-    let code = try!(serde_json::to_vec(msg));
+const PRESET: u32 = lzma::EXTREME_PRESET;
+
+pub enum CommonError {
+    SerdeJson(SerdeJsonError),
+    Lzma(LzmaError),
+}
+
+impl From<LzmaError> for CommonError {
+    fn from(e: LzmaError) -> CommonError {
+        CommonError::Lzma(e)
+    }
+}
+impl From<SerdeJsonError> for CommonError {
+    fn from(e: SerdeJsonError) -> CommonError {
+        CommonError::SerdeJson(e)
+    }
+}
+
+pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>,CommonError> {
+    let mut code = try!(compress(&*try!(serde_json::to_vec(msg)), PRESET));
     let len = code.len();
-    Ok(([(len / 256) as u8, len as u8],code))
+    let mut res = vec![(len / 256) as u8, len as u8];
+    res.append(&mut code);
+    Ok(res)
 }
 
 pub fn decode_size(size: &[u8;2]) -> usize {
     size[0] as usize * 256 + size[1] as usize
 }
 
-pub fn decode<T: Deserialize>(code: &[u8]) -> serde_json::error::Result<T> {
-    Ok(try!(serde_json::from_slice(code)))
+pub fn decode_msg<T: Deserialize>(code: &[u8]) -> Result<T,CommonError> {
+    Ok(try!(serde_json::from_slice(&*try!(decompress(code)))))
 }
+
+pub fn send<T: Serialize>(msg: &T, stream: &mut TcpStream) -> io::Result<()> {
+    match encode(msg) {
+        Ok(vector) => stream.write_all(&*vector),
+        Err(e) => match e {
+            CommonError::SerdeJson(e) => Err(io::Error::new(io::ErrorKind::Other,e)),
+            CommonError::Lzma(e) => Err(io::Error::new(io::ErrorKind::Other,e)),
+        }
+    }
+}
+
+pub fn recv<T: Deserialize>(buffer: &mut[u8], stream: &mut TcpStream) -> io::Result<T> {
+    let mut size_buffer = [0u8;2];
+    try!(stream.read_exact(&mut size_buffer));
+    let size = decode_size(&size_buffer);
+    if size > buffer.len() {
+        return Err(io::Error::new(io::ErrorKind::Other,"FullBuffer"));
+    }
+    let (msg_buffer,_) = buffer.split_at_mut(size);
+    try!(stream.read_exact(msg_buffer));
+    match decode_msg(&msg_buffer) {
+        Ok(t) => Ok(t),
+        Err(e) => match e {
+            CommonError::SerdeJson(e) => Err(io::Error::new(io::ErrorKind::Other,e)),
+            CommonError::Lzma(e) => Err(io::Error::new(io::ErrorKind::Other,e)),
+        }
+    }
+}
+

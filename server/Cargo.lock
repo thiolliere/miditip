@@ -4,7 +4,6 @@ version = "0.1.0"
 dependencies = [
  "argparse 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "common 0.1.0",
- "serde_json 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -29,6 +28,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "common"
 version = "0.1.0"
 dependencies = [
+ "rust-lzma 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_codegen 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -63,6 +63,11 @@ version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "pkg-config"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "quasi"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -78,6 +83,15 @@ dependencies = [
  "aster 0.13.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "syntex 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "syntex_syntax 0.29.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "rust-lzma"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "pkg-config 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
