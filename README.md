@@ -69,7 +69,7 @@ miditip depend on:
 
   On other system I don't know... for any help open an issue.
 
-###compile client (resp server)
+###compile
 
 it must work on the stable rust.
 
@@ -91,11 +91,7 @@ instructions are for Ubuntu / Debian, but you may be able to adapt on other dist
   cd miditip/client
   ```
 
-  (or for the server
-  ```sh
-  cd miditip/server
-  ```
-  )
+  (or for the server `cd miditip/server`)
 
 * compile
 
