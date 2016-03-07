@@ -24,13 +24,11 @@ You can so play jam session or repetition via internet.
 
 **SoundFont management**: doesn't ensure that all peers have the same soundfont.
 
-**Right management**: doesn't provide any tools to avoid two peers playing on the same channel etc...
-
 **Midi Input**: it will always need a midi input device
 
 **Midi Output**: it will always need a midi output device
 
-However midi output, right management and soundfont
+However midi output and soundfont
 management may be provided by another software in
 the future that will integrate miditip in its core.
 
