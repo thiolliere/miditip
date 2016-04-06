@@ -1,7 +1,8 @@
 language: rust
 rust:
   - stable
-sudo: required
-before_install:
-  - sudo apt-get install libportmidi-dev
-  - sudo apt-get install liblzma-dev
+addons:
+  apt:
+    packages:
+    - libportmidi-dev
+    - liblzma-dev
